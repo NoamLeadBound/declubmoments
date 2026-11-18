@@ -1128,6 +1128,15 @@ input:focus-visible {
   color: var(--celadon);
 }
 
+/* After a send only the thank-you stays (18.11: the form alerts the client group, no WhatsApp hand-off). */
+.lp-form.is-sent > :not(.lp-sent) {
+  display: none;
+}
+
+.f input[dir="ltr"] {
+  text-align: right;
+}
+
 /* ---------- Footer ---------- */
 
 .foot {

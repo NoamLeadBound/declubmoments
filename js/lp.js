@@ -1,6 +1,7 @@
 /* The landing page's form and (optional) visit tracking.
- * Form: name, role, company, team size -> opens WhatsApp to the number in data-wa (on <form id="form">)
- * with the message ready; the visitor presses send there.
+ * Form: name, role, company, phone -> one 'form_submit' event to data-endpoint (n8n alerts De Club's WhatsApp
+ * group with the details), then a thank-you in place of the form. No WhatsApp hand-off (Yuval 18.11: a personal
+ * approach must not land in customer service).
  * Tracking: only when <html> carries data-endpoint. Without it (this copy) nothing is sent anywhere;
  * add ?lpdebug=1 to the address to see the events in the browser console.
  */
@@ -91,55 +92,52 @@
     addEventListener('scroll', function () { fab.classList.toggle('is-in', H.scrollTop > innerHeight * 0.6); }, { passive: true });
   }
 
-  if (!form || !form.getAttribute('data-wa')) return;
+  if (!form) return;
 
-  // The form: seen, started, sent to WhatsApp.
-  var WA = form.getAttribute('data-wa');
-  var go = form.querySelector('.lp-go');
+  // The form: seen, started, submitted.
   function val(n) { var f = form.elements[n]; return ((f && f.value) || '').trim(); }
   function typed() {
-    return { name: val('name').slice(0, 80), role: val('role').slice(0, 80), company: val('company').slice(0, 80), size: val('size').slice(0, 80) };
+    return { name: val('name').slice(0, 80), role: val('role').slice(0, 80), company: val('company').slice(0, 80),
+      phone: val('phone').slice(0, 40) };
   }
-  function waHref() {
-    var lines = ['שלום, אשמח לתאם סשן היכרות ב-De Club.', 'שם: ' + val('name')];
-    if (val('role')) lines.push('תפקיד: ' + val('role'));
-    lines.push('חברה: ' + val('company'));   // team size stays out of the WhatsApp message on purpose
-    return 'https://wa.me/' + WA + '?text=' + encodeURIComponent(lines.join('\n'));
-  }
-  function sync() { if (go) go.href = waHref(); }
+  // A phone is valid with 9 to 15 digits (05x, 03, +972, abroad); spaces, dashes and brackets are allowed.
+  function phoneOk(v) { var d = v.replace(/\D/g, ''); return d.length >= 9 && d.length <= 15 && !/[^\d\s()+\-.]/.test(v); }
 
   if ('IntersectionObserver' in window) {
     new IntersectionObserver(function (en, io) {
       if (en.some(function (x) { return x.isIntersecting; })) { once('form_seen'); if (sent.form_seen) io.disconnect(); }
     }, { threshold: 0.4 }).observe(form);
   }
-  form.addEventListener('input', function () { sync(); once('form_start'); });
-  form.addEventListener('change', sync);
+  form.addEventListener('input', function () { once('form_start'); });
+
+  // The submit is the one event that must arrive: a beacon, and a keepalive fetch if the browser refuses the beacon.
+  function send(extra) {
+    var body = { event: 'form_submit', t: token, page: PAGE, sid: sid, active_s: active, scroll: maxScroll, extra: extra };
+    if (DEBUG || !ENDPOINT) console.info('[lp-track]', JSON.stringify(body));
+    if (!ENDPOINT) return;
+    var data = new URLSearchParams({ d: JSON.stringify(body) });
+    var ok = false;
+    try { ok = navigator.sendBeacon(ENDPOINT, data); } catch (e) { ok = false; }
+    if (!ok) {
+      try { fetch(ENDPOINT, { method: 'POST', body: data, keepalive: true, mode: 'no-cors' }); } catch (e) { /* nothing left to try */ }
+    }
+  }
 
   form.addEventListener('submit', function (e) {
     e.preventDefault();
+    if (sent.form_submit) return;
     var bad = null;
     form.querySelectorAll('[required]').forEach(function (f) {
-      var ok, mark = f;
-      if (f.type === 'radio') {   // a chip group: one required radio per group, the group carries the mark
-        ok = !!form.querySelector('[name="' + f.name + '"]:checked');
-        mark = f.closest('[role="radiogroup"]') || f;
-      } else {
-        ok = f.value.trim() !== '';
-      }
-      mark.setAttribute('aria-invalid', ok ? 'false' : 'true');
+      var ok = f.value.trim() !== '' && (f.name !== 'phone' || phoneOk(f.value.trim()));
+      f.setAttribute('aria-invalid', ok ? 'false' : 'true');
       if (!ok && !bad) bad = f;
     });
     if (bad) { bad.focus(); return; }
     moved();
-    var href = waHref();
-    if (go) go.href = href;
-    once('wa_click', typed());
+    sent.form_submit = true;
+    send(typed());
     form.classList.add('is-sent');
-    var ok = form.querySelector('.lp-sent');
-    if (ok) { ok.hidden = false; ok.focus({ preventScroll: true }); }
-    window.open(href, '_blank', 'noopener');
+    var done = form.querySelector('.lp-sent');
+    if (done) { done.hidden = false; done.focus({ preventScroll: true }); }
   });
-  if (go) go.addEventListener('click', function () { moved(); once('wa_click', typed()); });
-  sync();
 })();
